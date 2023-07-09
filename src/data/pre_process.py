@@ -120,7 +120,7 @@ def flood_fill2(mask, x, y, new_color):
 names = get_annotations('get_values')
 
 # Path for the masks
-mask_path = os.path.join(os.getcwd().split('src')[0],'data/processed/train/masks')
+mask_path = os.path.join(os.getcwd().split('src')[0],'data/processed/train/masks/')
 #mask_path = os.path.join(os.getcwd().split('hubmap')[0],'test/masks/')
 
 for count in tqdm(range(len(names))):
@@ -197,17 +197,19 @@ for count in tqdm(range(len(names))):
             
 
         # Correct mask 
-        mask[:,:,0] = swap_lower_upper_triangle(mask[:,:,0])  
-        mask[:,:,1] = swap_lower_upper_triangle(mask[:,:,1])  
-        mask[:,:,2] = swap_lower_upper_triangle(mask[:,:,2])  
+    mask[:,:,0] = swap_lower_upper_triangle(mask[:,:,0])  
+    mask[:,:,1] = swap_lower_upper_triangle(mask[:,:,1])  
+    mask[:,:,2] = swap_lower_upper_triangle(mask[:,:,2])  
 
-        plt.imsave(mask_path + "{}.jpeg".format(id), mask) 
+        #breakpoint()
 
-        """
-        mask = mask*255
-        mask = mask.astype(np.uint8)
+    plt.imsave(mask_path + "{}.jpeg".format(id), mask) 
 
-        im = Image.fromarray(mask)
-        im.save(mask_path + "{}.tif".format(id))
-        """
+    """
+    mask = mask*255
+    mask = mask.astype(np.uint8)
+
+    im = Image.fromarray(mask)
+    im.save(mask_path + "{}.tif".format(id))
+    """
                 
