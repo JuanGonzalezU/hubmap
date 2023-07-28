@@ -45,7 +45,7 @@ class CustomDataset(Dataset):
 
         if self.transform is not None:
             image = self.transform(image)
-            mask = self.transform(mask)
+            #mask = self.transform(mask)
 
         return image, mask
 
@@ -58,9 +58,13 @@ data_augmentation = Compose([
     ColorJitter(brightness=0.2, contrast=0.2, saturation=0.2, hue=0.1),  # Randomly adjust brightness, contrast, saturation, and hue
 ])
 
+mean = [0.485, 0.456, 0.406]
+std = [0.229, 0.224, 0.225]
+
 data_transform = Compose([
-    #data_augmentation,  # Data augmentation
+    data_augmentation,  # Data augmentation
     ToTensor(),         # Convert images to tensors   
+    Normalize(mean, std)
 ])
 
 # Assuming you have 'train', 'test', and 'validation' folders in your current directory
@@ -70,9 +74,9 @@ val_dataset = CustomDataset("/home/juandres/semillero_bcv/hubmap/data/processed/
 
 # Create DataLoader instances
 batch_size = 8
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True)
-test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
-val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False)
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,num_workers=6)
+test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False,num_workers=6)
+val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,num_workers=6)
 
 # Create ------------------------------------------------------------------------------------
 
@@ -83,7 +87,7 @@ model = models.segmentation.deeplabv3_resnet50(pretrained=False)
 input_of_last_layer = model.classifier[-1].in_channels
 
 # Desired output
-num_classes = 1 + 1 # Background class
+num_classes = 1 
 
 # Modify last layer
 model.classifier[-1] = torch.nn.Conv2d(input_of_last_layer, num_classes, kernel_size=(1, 1))
@@ -91,11 +95,47 @@ model.classifier[-1] = torch.nn.Conv2d(input_of_last_layer, num_classes, kernel_
 # Optimizer and Loss -------------------------------------------------------------------------
 
 # Setup loss function and optimizer
-loss_fn = nn.CrossEntropyLoss() # this is also called "criterion"/"cost function" in some places
-optimizer = torch.optim.SGD(params=model.parameters(), lr=0.1)
+loss_fn = nn.BCEWithLogitsLoss() # this is also called "criterion"/"cost function" in some places
+optimizer = torch.optim.SGD(params=model.parameters(), lr=0.001)
 
 # Set up metrics
 metrics = Evaluator(2)
+
+# Metrics functions ---------------------------------------------------------------------------
+
+def pixel_accuracy_single(y_pred, y_true):
+    y_pred = y_pred.float()  # Convert to float to avoid integer division
+    correct_pixels = torch.sum(y_pred == y_true)
+    total_pixels = y_true.numel()
+    accuracy = correct_pixels.float() / total_pixels
+    return accuracy
+
+
+def intersection_over_union_single(y_pred, y_true):
+    y_pred = y_pred.float()  # Convert to float to avoid integer division
+    intersection = torch.logical_and(y_pred, y_true)
+    union = torch.logical_or(y_pred, y_true)
+    
+    iou = torch.sum(intersection).float() / (torch.sum(union).float() + 1e-8)  # Add epsilon to avoid divide by zero
+    return iou
+
+
+def class_accuracy_single(y_pred, y_true, num_classes):
+    y_pred = y_pred.float()  # Convert to float to avoid integer comparison
+    class_correct = torch.zeros(num_classes)
+    class_total = torch.zeros(num_classes)
+
+    for class_idx in range(num_classes):
+        class_mask = (y_true == class_idx)
+        correct_predictions = torch.sum(y_pred[class_mask] == y_true[class_mask])
+        total_pixels = torch.sum(class_mask)
+
+        class_correct[class_idx] = correct_predictions
+        class_total[class_idx] = total_pixels
+
+    class_accuracy = class_correct.float() / (class_total.float() + 1e-8)  # Add epsilon to avoid divide by zero
+    return class_accuracy
+
 
 # Functions for training loop -----------------------------------------------------------------
 
@@ -114,25 +154,20 @@ def train_step(model,
 
     # Move model to device
     model.to(device)
-
-    train_loss  = 0
+    model.train()
 
     # Iterate over all batches of data
     for batch , (X,y) in enumerate(data_loader):
 
-        metrics.reset()
-        model.train()
-        
         # 0. Send data to GPU
-        X, y = X.to(device), y.to(device)        
+        X, y = X.to(device), y.to(device).long().squeeze_(1)        
 
         # 1. Forward pass
         y_pred = model(X)
         
-        # 2. Calcualte loss
-        loss = loss_fn(y_pred['out'],y.squeeze())
-        train_loss += loss.item()
-        
+        # 2. Calcualte loss      
+        loss = loss_fn(y_pred['out'].squeeze(), y.float())
+
         # 3. Optimizer zero grad
         optimizer.zero_grad()
 
@@ -143,30 +178,17 @@ def train_step(model,
         optimizer.step()
         
         # Get metrics -------------
+        pa = pixel_accuracy_single(torch.argmax(y_pred['out'],dim = 1)[1,:,:],y.squeeze()[1,:,:]).item()
+        iou = intersection_over_union_single(torch.argmax(y_pred['out'],dim = 1)[1,:,:],y.squeeze()[1,:,:]).item()
+        ca = class_accuracy_single(torch.argmax(y_pred['out'],dim = 1)[1,:,:],y.squeeze()[1,:,:],2)
 
-        # Get output
-        model.eval()
-        with torch.inference_mode(): 
-            y_pred = model(X)
-
-        # Move prediction to cpu
-        y_pred = y_pred['out'].cpu()
-
-        # Make probability prediction
-        y_pred = F.softmax(y_pred, dim=1).numpy()
-        y_pred = np.argmax(y_pred, axis=1)     
-
-        # Move and squeeze target
-        y = y.squeeze().cpu().numpy()        
-        metrics.add_batch(y, y_pred)
-        
         # Print results
-        if batch % 10 == 0:
+        if batch % 1 == 0:
             # Get metrics on training data        
             Acc_class = metrics.Pixel_Accuracy_Class()
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f} Acc_class: {:.6f}'.format(
+            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f} Acc1 : {:.6f} Acc2 : {:.6f} IoU : {:.6f} pAcc : {:.6f}'.format(
                 epoch, batch * len(X), len(data_loader.dataset),
-                100. * batch / len(data_loader), loss.item(),Acc_class))
+                100. * batch / len(data_loader), loss.item(),ca[0].item(),ca[1].item(),iou,pa))
             
          
 
@@ -188,6 +210,7 @@ def test_step(model,
     test_loss  = 0
     
     # Run ver data_loader
+    pa,iou,ca = 0,0,0
     for batch, (X, y) in enumerate(data_loader):
 
         # Move X and y to device
@@ -197,34 +220,19 @@ def test_step(model,
         with torch.inference_mode(): 
             y_pred = model(X)
 
-        # Get test loss
-        test_loss += loss_fn(y_pred['out'], y.squeeze()).item()
-                
-        # Move prediction to cpu
-        y_pred = y_pred['out'].cpu()
+         # Get metrics -------------
+        pa += pixel_accuracy_single(torch.argmax(y_pred['out'],dim = 1)[1,:,:],y.squeeze()[1,:,:]).item()
+        iou += intersection_over_union_single(torch.argmax(y_pred['out'],dim = 1)[1,:,:],y.squeeze()[1,:,:]).item()
+        ca += class_accuracy_single(torch.argmax(y_pred['out'],dim = 1)[1,:,:],y.squeeze()[1,:,:],2)
 
-        # Make probability prediction
-        y_pred = F.softmax(y_pred, dim=1).numpy()
-        y_pred = np.argmax(y_pred, axis=1)     
+    pa = pa/batch
+    iou = iou/batch
+    ca = ca/batch
+    
+    print('Acc1 : {:.6f} Acc2 : {:.6f} IoU : {:.6f} pAcc : {:.6f}'.format(
+        ca[0].item(),ca[1].item(),iou,pa))
 
-        # Move and squeeze target
-        y = y.squeeze().cpu().numpy()        
-
-        metrics.add_batch(y, y_pred)
-        
-    Acc = metrics.Pixel_Accuracy()
-    Acc_class = metrics.Pixel_Accuracy_Class()
-    mIoU = metrics.Mean_Intersection_over_Union()
-    FWIoU = metrics.Frequency_Weighted_Intersection_over_Union()
-
-    print('Validation:')
-    print('[Epoch: %d, numImages: %5d]' % (epoch, len(test_loader.dataset)))
-    print("Acc:{}, Acc_class:{}, mIoU:{}, fwIoU: {}".format(Acc, Acc_class, mIoU, FWIoU))
-    print('Loss: %.3f' % test_loss)
- 
-
-
-epochs = 3
+epochs = 15
 
 # Training loop
 
