@@ -6,7 +6,6 @@ import matplotlib.pyplot as plt
 import numpy as np
 from shapely.geometry import Point
 from shapely.geometry.polygon import Polygon
-import seaborn as sns
 import shutil
 from PIL import Image
 from tqdm import tqdm
@@ -82,7 +81,7 @@ def flood_fill2(mask, x, y, new_color):
 names = get_annotations('get_values')
 
 # Path for the masks
-mask_path = os.path.join(os.getcwd().split('src')[0],'data/processed/train/masks')
+mask_path = os.path.join(os.getcwd().split('src')[0],'data/processed/all_files/masks1')
 
 #mask_path = os.path.join(os.getcwd().split('hubmap')[0],'test/masks/')
 
@@ -160,7 +159,16 @@ for count in tqdm(range(len(names))):
             
     # Correct mask 
     all_mask = swap_lower_upper_triangle(all_mask)      
-    all_mask[all_mask >= 1] = 1 
+    all_mask[all_mask >= 1] = 255 
 
-    # Save image
-    plt.imsave(mask_path + "/{}.jpeg".format(id), all_mask) 
+    # Create an RGB mask
+    RGB_mask = np.zeros([512, 512, 3])
+
+    # Binary mask will be saved on R channel (dim = 0, pos = 0)
+    RGB_mask[:,:,0] = all_mask
+    RGB_mask = RGB_mask.astype(np.uint8)
+
+    # Convert matrix to image and save it
+    im = Image.fromarray(RGB_mask)
+    im.save(mask_path + "/{}.jpeg".format(id))
+
