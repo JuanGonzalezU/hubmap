@@ -10,9 +10,14 @@ from utils import Evaluator
 import numpy as np
 from torch.autograd import Variable
 import torch.nn.functional as F
+import time
+import gc
+from torch.optim.lr_scheduler import StepLR
+
+
+torch.cuda.empty_cache()
 
 # Create Custon DataLoader   --------------------------------------------------------------------------------
-
 class CustomDataset(Dataset):
     def __init__(self, root_dir, transform=None):
         self.root_dir = root_dir
@@ -73,21 +78,21 @@ test_dataset = CustomDataset("/home/juandres/semillero_bcv/hubmap/data/processed
 val_dataset = CustomDataset("/home/juandres/semillero_bcv/hubmap/data/processed/validation", transform=data_transform)
 
 # Create DataLoader instances
-batch_size = 8
+batch_size = 4
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,num_workers=6)
-test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False,num_workers=6)
+test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False,num_workers=6)
 val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,num_workers=6)
 
 # Create ------------------------------------------------------------------------------------
 
 # Initialize model
-model = models.segmentation.deeplabv3_resnet50(pretrained=False)
+model = models.segmentation.deeplabv3_resnet50(pretrained=True)
 
 # Change the last layer
 input_of_last_layer = model.classifier[-1].in_channels
 
 # Desired output
-num_classes = 1 
+num_classes = 2 
 
 # Modify last layer
 model.classifier[-1] = torch.nn.Conv2d(input_of_last_layer, num_classes, kernel_size=(1, 1))
@@ -95,8 +100,10 @@ model.classifier[-1] = torch.nn.Conv2d(input_of_last_layer, num_classes, kernel_
 # Optimizer and Loss -------------------------------------------------------------------------
 
 # Setup loss function and optimizer
-loss_fn = nn.BCEWithLogitsLoss() # this is also called "criterion"/"cost function" in some places
-optimizer = torch.optim.SGD(params=model.parameters(), lr=0.001)
+loss_fn = nn.CrossEntropyLoss()
+#loss_fn = nn.BCEWithLogitsLoss() # this is also called "criterion"/"cost function" in some places
+lr = 0.01
+optimizer = torch.optim.SGD(params=model.parameters(), lr=lr)
 
 # Set up metrics
 metrics = Evaluator(2)
@@ -127,6 +134,7 @@ def class_accuracy_single(y_pred, y_true, num_classes):
 
     for class_idx in range(num_classes):
         class_mask = (y_true == class_idx)
+        #breakpoint()
         correct_predictions = torch.sum(y_pred[class_mask] == y_true[class_mask])
         total_pixels = torch.sum(class_mask)
 
@@ -149,9 +157,6 @@ def train_step(model,
                optimizer,
                device):
 
-    # Change model to 'train'
-    model.train()
-
     # Move model to device
     model.to(device)
     model.train()
@@ -160,16 +165,18 @@ def train_step(model,
     for batch , (X,y) in enumerate(data_loader):
 
         # 0. Send data to GPU
-        X, y = X.to(device), y.to(device).long().squeeze_(1)        
+        X, y = X.to(device), y.to(device).long().squeeze_(1)  
+
+        # 3. Optimizer zero grad
+        optimizer.zero_grad()      
 
         # 1. Forward pass
         y_pred = model(X)
         
-        # 2. Calcualte loss      
-        loss = loss_fn(y_pred['out'].squeeze(), y.float())
-
-        # 3. Optimizer zero grad
-        optimizer.zero_grad()
+        # 2. Calculate loss      
+        loss = loss_fn(y_pred['out'].argmax(1).squeeze().float(), y.float())
+        loss.requires_grad = True
+        #breakpoint()
 
         # 4. Loss backward
         loss.backward()
@@ -178,17 +185,22 @@ def train_step(model,
         optimizer.step()
         
         # Get metrics -------------
-        pa = pixel_accuracy_single(torch.argmax(y_pred['out'],dim = 1)[1,:,:],y.squeeze()[1,:,:]).item()
-        iou = intersection_over_union_single(torch.argmax(y_pred['out'],dim = 1)[1,:,:],y.squeeze()[1,:,:]).item()
-        ca = class_accuracy_single(torch.argmax(y_pred['out'],dim = 1)[1,:,:],y.squeeze()[1,:,:],2)
+        pa = 0
+        iou = 0
+        ca = 0
+        for i in range(y.shape[0]):
+            pa += pixel_accuracy_single(torch.argmax(y_pred['out'],dim = 1)[i,:,:],y.squeeze()[i,:,:]).item()
+            iou += intersection_over_union_single(torch.argmax(y_pred['out'],dim = 1)[i,:,:],y.squeeze()[i,:,:]).item()
+            ca += class_accuracy_single(torch.argmax(y_pred['out'],dim = 1)[i,:,:],y.squeeze()[i,:,:],2)
 
         # Print results
-        if batch % 1 == 0:
+        if batch % 10 == 0:
             # Get metrics on training data        
             Acc_class = metrics.Pixel_Accuracy_Class()
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f} Acc1 : {:.6f} Acc2 : {:.6f} IoU : {:.6f} pAcc : {:.6f}'.format(
+            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f} Acc0 : {:.6f} Acc1 : {:.6f} IoU : {:.6f} pAcc : {:.6f}'.format(
                 epoch, batch * len(X), len(data_loader.dataset),
-                100. * batch / len(data_loader), loss.item(),ca[0].item(),ca[1].item(),iou,pa))
+                100. * batch / len(data_loader), loss.item(),ca[0].item()/y.shape[0],ca[1].item()/y.shape[0],iou/y.shape[0],pa/y.shape[0]))
+        
             
          
 
@@ -211,33 +223,45 @@ def test_step(model,
     
     # Run ver data_loader
     pa,iou,ca = 0,0,0
-    for batch, (X, y) in enumerate(data_loader):
-
+    for X, y in data_loader:
+  
         # Move X and y to device
         X, y = X.to(device), y.to(device)
 
         # Get output
         with torch.inference_mode(): 
             y_pred = model(X)
+            test_loss += loss_fn(torch.argmax(y_pred['out'],dim = 1)[0,:,:].float(),y.squeeze().float()).item()
 
          # Get metrics -------------
-        pa += pixel_accuracy_single(torch.argmax(y_pred['out'],dim = 1)[1,:,:],y.squeeze()[1,:,:]).item()
-        iou += intersection_over_union_single(torch.argmax(y_pred['out'],dim = 1)[1,:,:],y.squeeze()[1,:,:]).item()
-        ca += class_accuracy_single(torch.argmax(y_pred['out'],dim = 1)[1,:,:],y.squeeze()[1,:,:],2)
+        pa += pixel_accuracy_single(torch.argmax(y_pred['out'],dim = 1)[0,:,:],y.squeeze()).item()
+        iou += intersection_over_union_single(torch.argmax(y_pred['out'],dim = 1)[0,:,:],y.squeeze()[:,:]).item()
+        ca += class_accuracy_single(torch.argmax(y_pred['out'],dim = 1)[0,:,:],y.squeeze()[:,:],2)
 
-    pa = pa/batch
-    iou = iou/batch
-    ca = ca/batch
+    test_loss /= len(data_loader)
+    pa = pa/len(data_loader)
+    iou = iou/len(data_loader)
+    ca = ca/len(data_loader)
     
-    print('Acc1 : {:.6f} Acc2 : {:.6f} IoU : {:.6f} pAcc : {:.6f}'.format(
-        ca[0].item(),ca[1].item(),iou,pa))
+    print('-' * 89)
+    print('Average loss: {:.4f} Acc0 : {:.6f} Acc1 : {:.6f} IoU : {:.6f} pAcc : {:.6f}'.format(
+        test_loss, ca[0].item(),ca[1].item(),iou,pa))
+    
+    return test_loss
 
 epochs = 15
 
 # Training loop
+best_loss = None
+save = 'model.pt'
+
+
+scheduler = StepLR(optimizer, step_size=5, gamma=0.1)
 
 for epoch in range(epochs):
-    print(f"Epoch: {epoch}\n---------")
+    #print(f"Epoch: {epoch}\n---------")
+
+    epoch_start_time = time.time()
 
     train_step(
         model, 
@@ -247,8 +271,20 @@ for epoch in range(epochs):
         device
     )
 
-    test_step(model,
+    test_loss = test_step(model,
               test_loader,
               loss_fn,
               device)
     
+    print('-' * 89)
+    print('| end of epoch {:3d} | time: {:5.2f}s | lr: {:.6f}'.format(
+        epoch, time.time() - epoch_start_time, lr))
+    print('-' * 89)
+
+    if best_loss is None or test_loss < best_loss:
+        best_loss = test_loss
+        with open(save, 'wb') as fp:
+            state = model.state_dict()
+            torch.save(state, fp)
+    else:
+        scheduler.step()
