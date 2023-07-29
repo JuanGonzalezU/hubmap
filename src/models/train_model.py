@@ -13,6 +13,8 @@ import torch.nn.functional as F
 import time
 import gc
 from torch.optim.lr_scheduler import StepLR
+import PIL
+
 
 
 torch.cuda.empty_cache()
@@ -46,7 +48,11 @@ class CustomDataset(Dataset):
 
         # Get only the RED channel of the mask
         mask = np.array(mask)
-        mask = (mask[:,:,0]/255).astype(int)
+        mask = mask[:,:,0]*(mask[:,:,0]>75)
+        mask = mask/255
+        mask = np.ceil(mask)
+        mask = mask.astype(np.uint8)
+        #mask = mask.astype(float)
 
         if self.transform is not None:
             image = self.transform(image)
@@ -67,9 +73,9 @@ mean = [0.485, 0.456, 0.406]
 std = [0.229, 0.224, 0.225]
 
 data_transform = Compose([
-    data_augmentation,  # Data augmentation
+    #data_augmentation,  # Data augmentation
     ToTensor(),         # Convert images to tensors   
-    Normalize(mean, std)
+    #Normalize(mean, std)
 ])
 
 # Assuming you have 'train', 'test', and 'validation' folders in your current directory
@@ -79,15 +85,14 @@ val_dataset = CustomDataset("/home/juandres/semillero_bcv/hubmap/data/processed/
 
 # Create DataLoader instances
 batch_size = 4
-train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,num_workers=6)
-test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False,num_workers=6)
-val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,num_workers=6)
+train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,num_workers=1)
+test_loader = DataLoader(test_dataset, batch_size=1, shuffle=False,num_workers=1)
+val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,num_workers=1)
 
 # Create ------------------------------------------------------------------------------------
 
 # Initialize model
 model = models.segmentation.deeplabv3_resnet50(pretrained=True)
-
 # Change the last layer
 input_of_last_layer = model.classifier[-1].in_channels
 
@@ -96,7 +101,6 @@ num_classes = 2
 
 # Modify last layer
 model.classifier[-1] = torch.nn.Conv2d(input_of_last_layer, num_classes, kernel_size=(1, 1))
-
 # Optimizer and Loss -------------------------------------------------------------------------
 
 # Setup loss function and optimizer
@@ -148,7 +152,7 @@ def class_accuracy_single(y_pred, y_true, num_classes):
 # Functions for training loop -----------------------------------------------------------------
 
 # Make code agnositc
-device = 'cuda' if torch.cuda.is_available() else 'cpu'
+device = 'cuda:2' if torch.cuda.is_available() else 'cpu'
 
 # Defie train step function
 def train_step(model,
@@ -158,20 +162,44 @@ def train_step(model,
                device):
 
     # Move model to device
-    model.to(device)
     model.train()
 
     # Iterate over all batches of data
     for batch , (X,y) in enumerate(data_loader):
 
+        #Visualization of image
+        x = X[0].numpy()
+        xt = x.copy()
+        xt = (xt*255).astype(np.uint8)
+        xt = np.transpose(xt, (1,2,0))
+        xt = Image.fromarray(xt)
+        xt.save('xt.jpeg')
+
+        #Visualization of mask
+        Y = y[0].numpy()
+        Yt = Y.copy()
+        Yt = (Yt*255).astype(np.uint8)
+        Yt = Image.fromarray(Yt)
+        Yt.save('Yt.jpeg')
+        
         # 0. Send data to GPU
         X, y = X.to(device), y.to(device).long().squeeze_(1)  
+        X, y = Variable(X), Variable(y)
+        
 
         # 3. Optimizer zero grad
         optimizer.zero_grad()      
 
         # 1. Forward pass
+        
         y_pred = model(X)
+        #Visualization of y_pred
+        Y = (y_pred['out'][0].argmax(0)).detach().to('cpu').numpy()
+        Yt = Y.copy()
+        Yt = (Yt*255).astype(np.uint8)
+        Yt = Image.fromarray(Yt)
+        Yt.save('Y_predt.jpeg')
+        
         
         # 2. Calculate loss      
         loss = loss_fn(y_pred['out'].argmax(1).squeeze().float(), y.float())
@@ -212,7 +240,6 @@ def test_step(model,
               device):
     
     # Change model to evaluate
-    model.to(device)
     model.eval()
 
     # Reset metrics
@@ -255,8 +282,9 @@ epochs = 15
 best_loss = None
 save = 'model.pt'
 
-
+# Scheduler to modify learning rate
 scheduler = StepLR(optimizer, step_size=5, gamma=0.1)
+model.to(device)
 
 for epoch in range(epochs):
     #print(f"Epoch: {epoch}\n---------")
@@ -281,6 +309,7 @@ for epoch in range(epochs):
         epoch, time.time() - epoch_start_time, lr))
     print('-' * 89)
 
+    # Saving of best model
     if best_loss is None or test_loss < best_loss:
         best_loss = test_loss
         with open(save, 'wb') as fp:
