@@ -11,13 +11,8 @@ import numpy as np
 from torch.autograd import Variable
 import torch.nn.functional as F
 import time
-import gc
 from torch.optim.lr_scheduler import StepLR
-import PIL
 
-
-
-torch.cuda.empty_cache()
 
 # Create Custon DataLoader   --------------------------------------------------------------------------------
 class CustomDataset(Dataset):
@@ -48,11 +43,7 @@ class CustomDataset(Dataset):
 
         # Get only the RED channel of the mask
         mask = np.array(mask)
-        mask = mask[:,:,0]*(mask[:,:,0]>75)
-        mask = mask/255
-        mask = np.ceil(mask)
-        mask = mask.astype(np.uint8)
-        #mask = mask.astype(float)
+        mask = (mask[:,:,0]/255).astype(int)
 
         if self.transform is not None:
             image = self.transform(image)
@@ -103,11 +94,22 @@ num_classes = 2
 model.classifier[-1] = torch.nn.Conv2d(input_of_last_layer, num_classes, kernel_size=(1, 1))
 # Optimizer and Loss -------------------------------------------------------------------------
 
+# Make code agnositc
+device = 'cuda:2' if torch.cuda.is_available() else 'cpu'
+
 # Setup loss function and optimizer
-loss_fn = nn.CrossEntropyLoss()
+
+# Class weighting 
+class_weights = torch.tensor([1.0, 15.0])  # Background, Foreground
+loss_fn = nn.CrossEntropyLoss(class_weights.to(device))
 #loss_fn = nn.BCEWithLogitsLoss() # this is also called "criterion"/"cost function" in some places
-lr = 0.01
-optimizer = torch.optim.SGD(params=model.parameters(), lr=lr)
+lr = 0.001
+optimizer = torch.optim.Adam(params=model.parameters(), lr=lr)
+
+# Function to get the learning rate during training
+def get_lr(optimizer):
+    for param_group in optimizer.param_groups:
+        return param_group['lr']
 
 # Set up metrics
 metrics = Evaluator(2)
@@ -151,11 +153,9 @@ def class_accuracy_single(y_pred, y_true, num_classes):
 
 # Functions for training loop -----------------------------------------------------------------
 
-# Make code agnositc
-device = 'cuda:2' if torch.cuda.is_available() else 'cpu'
-
 # Defie train step function
-def train_step(model,
+def train_step(epoch,
+               model,
                data_loader,
                loss_fn,
                optimizer,
@@ -166,7 +166,7 @@ def train_step(model,
 
     # Iterate over all batches of data
     for batch , (X,y) in enumerate(data_loader):
-
+        """
         #Visualization of image
         x = X[0].numpy()
         xt = x.copy()
@@ -174,37 +174,20 @@ def train_step(model,
         xt = np.transpose(xt, (1,2,0))
         xt = Image.fromarray(xt)
         xt.save('xt.jpeg')
-
-        #Visualization of mask
-        Y = y[0].numpy()
-        Yt = Y.copy()
-        Yt = (Yt*255).astype(np.uint8)
-        Yt = Image.fromarray(Yt)
-        Yt.save('Yt.jpeg')
+        """
         
         # 0. Send data to GPU
         X, y = X.to(device), y.to(device).long().squeeze_(1)  
         X, y = Variable(X), Variable(y)
-        
 
         # 3. Optimizer zero grad
         optimizer.zero_grad()      
 
         # 1. Forward pass
-        
-        y_pred = model(X)
-        #Visualization of y_pred
-        Y = (y_pred['out'][0].argmax(0)).detach().to('cpu').numpy()
-        Yt = Y.copy()
-        Yt = (Yt*255).astype(np.uint8)
-        Yt = Image.fromarray(Yt)
-        Yt.save('Y_predt.jpeg')
-        
+        y_pred = model(X)['out']
         
         # 2. Calculate loss      
-        loss = loss_fn(y_pred['out'].argmax(1).squeeze().float(), y.float())
-        loss.requires_grad = True
-        #breakpoint()
+        loss = loss_fn(y_pred, y)
 
         # 4. Loss backward
         loss.backward()
@@ -212,26 +195,39 @@ def train_step(model,
         # 5. Optimizer step
         optimizer.step()
         
-        # Get metrics -------------
-        pa = 0
-        iou = 0
-        ca = 0
-        for i in range(y.shape[0]):
-            pa += pixel_accuracy_single(torch.argmax(y_pred['out'],dim = 1)[i,:,:],y.squeeze()[i,:,:]).item()
-            iou += intersection_over_union_single(torch.argmax(y_pred['out'],dim = 1)[i,:,:],y.squeeze()[i,:,:]).item()
-            ca += class_accuracy_single(torch.argmax(y_pred['out'],dim = 1)[i,:,:],y.squeeze()[i,:,:],2)
-
         # Print results
         if batch % 10 == 0:
+            
+            # Get metrics -------------
+            pa = 0
+            iou = 0
+            ca = 0
+            for i in range(y.shape[0]):
+                pa += pixel_accuracy_single(torch.argmax(y_pred,dim = 1)[i,:,:],y.squeeze()[i,:,:]).item()
+                iou += intersection_over_union_single(torch.argmax(y_pred,dim = 1)[i,:,:],y.squeeze()[i,:,:]).item()
+                ca += class_accuracy_single(torch.argmax(y_pred,dim = 1)[i,:,:],y.squeeze()[i,:,:],2)
+
+            #Visualization of mask
+            Y = y[0].detach().to('cpu').numpy()
+            Yt = Y.copy()
+            Yt = (Yt*255).astype(np.uint8)
+            Yt = Image.fromarray(Yt)
+            Yt.save('Yt.png')
+
+            #Visualization of y_pred
+            Y = (y_pred[0].argmax(0)).detach().to('cpu').numpy()
+            Yt = Y.copy()
+            Yt = (Yt*255).astype(np.uint8)
+            Yt = Image.fromarray(Yt)
+            Yt.save('Y_predt.png')
+
             # Get metrics on training data        
             Acc_class = metrics.Pixel_Accuracy_Class()
-            print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f} Acc0 : {:.6f} Acc1 : {:.6f} IoU : {:.6f} pAcc : {:.6f}'.format(
-                epoch, batch * len(X), len(data_loader.dataset),
-                100. * batch / len(data_loader), loss.item(),ca[0].item()/y.shape[0],ca[1].item()/y.shape[0],iou/y.shape[0],pa/y.shape[0]))
-        
+            print(f'Epoch {epoch+1}/{epochs}, Batch {batch}/{len(train_loader)}, Loss: {loss.item()}, Acc1 : {ca[0].item()/y.shape[0]}, Acc2 : {ca[1].item()/y.shape[0]}, IoU : {iou/y.shape[0]}, pAcc : {pa/y.shape[0]}')
+            #print('Train Epoch: {} [{}/{} ({:.0f}%)]\tLoss: {:.6f} Acc0 : {:.6f} Acc1 : {:.6f} IoU : {:.6f} pAcc : {:.6f}'.format(
+            #    epoch, batch * len(X), len(data_loader.dataset),
+            #    100. * batch / len(data_loader), loss.item(),ca[0].item()/y.shape[0],ca[1].item()/y.shape[0],iou/y.shape[0],pa/y.shape[0]))
             
-         
-
 
 # Define test step
 def test_step(model,
@@ -257,13 +253,13 @@ def test_step(model,
 
         # Get output
         with torch.inference_mode(): 
-            y_pred = model(X)
-            test_loss += loss_fn(torch.argmax(y_pred['out'],dim = 1)[0,:,:].float(),y.squeeze().float()).item()
+            y_pred = model(X)['out']
+            test_loss += loss_fn(y_pred,y).item()
 
          # Get metrics -------------
-        pa += pixel_accuracy_single(torch.argmax(y_pred['out'],dim = 1)[0,:,:],y.squeeze()).item()
-        iou += intersection_over_union_single(torch.argmax(y_pred['out'],dim = 1)[0,:,:],y.squeeze()[:,:]).item()
-        ca += class_accuracy_single(torch.argmax(y_pred['out'],dim = 1)[0,:,:],y.squeeze()[:,:],2)
+        pa += pixel_accuracy_single(torch.argmax(y_pred,dim = 1)[0,:,:],y.squeeze()).item()
+        iou += intersection_over_union_single(torch.argmax(y_pred,dim = 1)[0,:,:],y.squeeze()[:,:]).item()
+        ca += class_accuracy_single(torch.argmax(y_pred,dim = 1)[0,:,:],y.squeeze()[:,:],2)
 
     test_loss /= len(data_loader)
     pa = pa/len(data_loader)
@@ -283,7 +279,7 @@ best_loss = None
 save = 'model.pt'
 
 # Scheduler to modify learning rate
-scheduler = StepLR(optimizer, step_size=5, gamma=0.1)
+scheduler = StepLR(optimizer, step_size=5, gamma=0.5)
 model.to(device)
 
 for epoch in range(epochs):
@@ -292,6 +288,7 @@ for epoch in range(epochs):
     epoch_start_time = time.time()
 
     train_step(
+        epoch,
         model, 
         train_loader, 
         loss_fn,
@@ -305,9 +302,12 @@ for epoch in range(epochs):
               device)
     
     print('-' * 89)
-    print('| end of epoch {:3d} | time: {:5.2f}s | lr: {:.6f}'.format(
-        epoch, time.time() - epoch_start_time, lr))
+    print('| end of epoch {:3d} | time: {:5.2f}s | lr: {:6f}'.format(
+        epoch, time.time() - epoch_start_time, get_lr(optimizer)))
     print('-' * 89)
+    print(optimizer)
+    print('-' * 89)
+    scheduler.step()
 
     # Saving of best model
     if best_loss is None or test_loss < best_loss:
@@ -315,5 +315,3 @@ for epoch in range(epochs):
         with open(save, 'wb') as fp:
             state = model.state_dict()
             torch.save(state, fp)
-    else:
-        scheduler.step()
