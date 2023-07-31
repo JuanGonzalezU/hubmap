@@ -81,7 +81,7 @@ def flood_fill2(mask, x, y, new_color):
 names = get_annotations('get_values')
 
 # Path for the masks
-mask_path = os.path.join(os.getcwd().split('src')[0],'data/processed/all_files/masks1')
+mask_path = os.path.join(os.getcwd().split('src')[0],'data/processed/all_files/masks')
 
 #mask_path = os.path.join(os.getcwd().split('hubmap')[0],'test/masks/')
 
@@ -170,5 +170,6 @@ for count in tqdm(range(len(names))):
 
     # Convert matrix to image and save it
     im = Image.fromarray(RGB_mask)
-    im.save(mask_path + "/{}.jpeg".format(id))
+
+    im.save(mask_path + "/{}.png".format(id))
 

@@ -9,6 +9,9 @@ __pycache__/
 data/
 !/src/data/
 
+# Models
+models/
+
 # Distribution / packaging
 .Python
 env/
