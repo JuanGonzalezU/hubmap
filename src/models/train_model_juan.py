@@ -80,7 +80,7 @@ test_dataset = CustomDataset("/home/juandres/semillero_bcv/hubmap/data/processed
 val_dataset = CustomDataset("/home/juandres/semillero_bcv/hubmap/data/processed/validation", transform=data_transform)
 
 # Create DataLoader instances
-batch_size = 10
+batch_size = 9
 train_loader = DataLoader(train_dataset, batch_size=batch_size, shuffle=True,num_workers=6)
 test_loader = DataLoader(test_dataset, batch_size=batch_size, shuffle=False,num_workers=6)
 val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,num_workers=6)
@@ -88,7 +88,7 @@ val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,num_wo
 # Create ------------------------------------------------------------------------------------
 
 # Initialize model
-model = models.segmentation.deeplabv3_resnet50(pretrained=False)
+model = models.segmentation.deeplabv3_resnet50(pretrained=True)
 
 # Change the last layer
 input_of_last_layer = model.classifier[-1].in_channels
@@ -247,7 +247,7 @@ def adjust_learning_rate(lr, optimizer, gamma, step):
 # Optimizer and Loss -------------------------------------------------------------------------
 
 # Setup loss function and optimizer
-lr = 0.1
+lr = 0.01
 class_weights = torch.tensor([1.0, 15.0])  # Background, Foreground
 loss_fn = nn.CrossEntropyLoss(class_weights.to(device))
 optimizer = torch.optim.SGD(params=model.parameters(), lr=lr)
@@ -255,7 +255,7 @@ optimizer = torch.optim.SGD(params=model.parameters(), lr=lr)
 # Set up metrics
 metrics = Evaluator(num_classes)
 
-epochs = 15
+epochs = 30
 
 # Training loop --------------------------------------------------------------------------------
 best_loss = None
@@ -279,7 +279,7 @@ for epoch in range(epochs):
     # Saving of best model
     if best_loss is None or test_loss < best_loss:
         best_loss = test_loss
-        with open('/home/juandres/semillero_bcv/hubmap/models/test3.pt', 'wb') as fp:
+        with open('/home/juandres/semillero_bcv/hubmap/models/model_RES50_norm_own_45.pt', 'wb') as fp:
             state = model.state_dict()
             torch.save(state, fp)
     else:

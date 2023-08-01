@@ -94,17 +94,6 @@ all_data_transfroms  = [data_transform0,data_transform1,data_transform2]
 batch_size = 8
 num_workers = 5
 
-# Create dataset    
-print('------------------------------------')
-val_dataset_transform = CustomDataset("/home/juandres/semillero_bcv/hubmap/data/processed/validation", transform=data_transform1)
-val_dataset = CustomDataset("/home/juandres/semillero_bcv/hubmap/data/processed/validation",transform=data_transform2)
-print(bcolors.OKGREEN+'Datasets Created'+bcolors.ENDC)
-
-# Create DataLoader
-val_loader_tansform = DataLoader(val_dataset_transform, batch_size=batch_size, shuffle=False,num_workers=num_workers)
-val_loader = DataLoader(val_dataset, batch_size=batch_size, shuffle=False,num_workers=num_workers)
-print(bcolors.OKGREEN+'Folders Created'+bcolors.ENDC)
-
 # Iterate over all the models contained models directry
 
 # Get files
