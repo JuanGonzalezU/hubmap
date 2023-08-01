@@ -14,7 +14,7 @@ import time
 import gc
 from torch.optim.lr_scheduler import StepLR
 
-# Create Custon DataLoader   --------------------------------------------------------------------------------
+# Create Custom DataLoader   --------------------------------------------------------------------------------
 
 class CustomDataset(Dataset):
     def __init__(self, root_dir, transform=None):
@@ -44,40 +44,46 @@ class CustomDataset(Dataset):
 
         # Get only the RED channel of the mask
         mask = np.array(mask)
-        mask = (mask[:,:,0]/255).astype(int)     
+        mask = (mask[:,:,0]/255).astype(int)
 
+        # Apply data augmentation if specified
         if self.transform is not None:
+            # Apply data augmentation to image
             image = self.transform(image)
-            #mask = self.transform(mask)
+
+            # Do not apply data augmentation to mask to preserve its values
+            mask = ToTensor()(mask)  # Convert mask to tensor (keep values unchanged)
 
         return image, mask
 
-# Define data augmentation transformations
-
-data_augmentation = Compose([
+# Define data augmentation transformations for images
+image_augmentation = Compose([
     RandomHorizontalFlip(),  # Randomly flip the image horizontally
     RandomVerticalFlip(),    # Randomly flip the image vertically
-    RandomRotation(degrees=180),  # Randomly rotate the image up to 180 degrees
+    RandomRotation(degrees=13),  # Randomly rotate the image up to 180 degrees
 ])
 
-# Values 1
-mean_v1 = [0.485, 0.456, 0.406]
-std_v1 = [0.229, 0.224, 0.225]
 
 # Values of current dataset
 mean_v2 = [0.6300351620, 0.4150927663, 0.6850880980]
 std_v2 = [0.1454657167, 0.1958113164, 0.1234567240]
 
+
+# Define data transformation pipeline
 data_transform = Compose([
-    #data_augmentation,  # Data augmentation
-    ToTensor(),         # Convert images to tensors   
-    Normalize(mean_v2, std_v2)
+    image_augmentation,  # Apply data augmentation to images
+    ToTensor(),          # Convert images to tensors
+    Normalize(mean_v2, std_v2)  # Normalize the image values using the dataset's mean and std
 ])
 
-# Assuming you have 'train', 'test', and 'validation' folders in your current directory
+# ... (Rest of the code remains unchanged)
+
+# Modify your existing DataLoader instances
+
 train_dataset = CustomDataset("/home/juandres/semillero_bcv/hubmap/data/processed/train", transform=data_transform)
 test_dataset = CustomDataset("/home/juandres/semillero_bcv/hubmap/data/processed/test", transform=data_transform)
 val_dataset = CustomDataset("/home/juandres/semillero_bcv/hubmap/data/processed/validation", transform=data_transform)
+
 
 # Create DataLoader instances
 batch_size = 10
@@ -279,7 +285,7 @@ for epoch in range(epochs):
     # Saving of best model
     if best_loss is None or test_loss < best_loss:
         best_loss = test_loss
-        with open('/home/juandres/semillero_bcv/hubmap/models/test3.pt', 'wb') as fp:
+        with open('/home/juandres/semillero_bcv/hubmap/models/test4.pt', 'wb') as fp:
             state = model.state_dict()
             torch.save(state, fp)
     else:
