@@ -108,7 +108,8 @@ models_parameters = [['model_Res50_norm_own',all_data_transfroms[2],False,'RESNE
                      ['model_Res50_w_norm',all_data_transfroms[1],True,'RESNET50'],
                      ['model_Res50_wt_transform',all_data_transfroms[0],True,'RESNET50'],
                      ['model_Res101_wt_transform',all_data_transfroms[0],True,'RESNET101'],
-                     ['model_RES50_norm_own_30',all_data_transfroms[2],True,'RESNET50']]
+                     ['model_RES50_norm_own_30',all_data_transfroms[2],True,'RESNET50'],
+                     ['model_Res50_FCN',all_data_transfroms[2],True,'RESNETFCN']]
 
 # Check all files are .pt
 
@@ -169,6 +170,8 @@ for num_model, model_name in enumerate(os.listdir('/home/juandres/semillero_bcv/
             model = models.segmentation.deeplabv3_resnet50(pretrained=parameter[2])
         elif parameter[3] == 'RESNET101':
             model = models.segmentation.deeplabv3_resnet101(pretrained=parameter[2])
+        elif parameter[3] == 'RESNETFCN':
+            model = models.segmentation.fcn_resnet50(pretrained=parameter[2])
         else:
             print('No model created, check the models_parameters ... moving to next model') 
             flag = True

@@ -75,9 +75,9 @@ data_transform = Compose([
 ])
 
 # Assuming you have 'train', 'test', and 'validation' folders in your current directory
-train_dataset = CustomDataset("/home/juandres/semillero_bcv/hubmap/data/processed/train", transform=data_transform)
-test_dataset = CustomDataset("/home/juandres/semillero_bcv/hubmap/data/processed/test", transform=data_transform)
-val_dataset = CustomDataset("/home/juandres/semillero_bcv/hubmap/data/processed/validation", transform=data_transform)
+train_dataset = CustomDataset("/home/juandres/semillero_bcv/hubmap/data/processed_d1/train", transform=data_transform)
+test_dataset = CustomDataset("/home/juandres/semillero_bcv/hubmap/data/processed_d1/test", transform=data_transform)
+val_dataset = CustomDataset("/home/juandres/semillero_bcv/hubmap/data/processed_d1/validation", transform=data_transform)
 
 # Create DataLoader instances
 batch_size = 9
@@ -279,7 +279,7 @@ for epoch in range(epochs):
     # Saving of best model
     if best_loss is None or test_loss < best_loss:
         best_loss = test_loss
-        with open('/home/juandres/semillero_bcv/hubmap/models/model_RES50_norm_own_45.pt', 'wb') as fp:
+        with open('/home/juandres/semillero_bcv/hubmap/models/model_RES50_norm_own_d1.pt', 'wb') as fp:
             state = model.state_dict()
             torch.save(state, fp)
     else:
