@@ -63,7 +63,7 @@ class bcolors:
 # Transfomrations
 
 # Set device for predictions
-device = 'cuda'
+device = 'cpu'
 
 # All data transforms
 
@@ -109,7 +109,7 @@ models_parameters = [['model_Res50_norm_own',all_data_transfroms[2],False,'RESNE
                      ['model_Res50_wt_transform',all_data_transfroms[0],True,'RESNET50'],
                      ['model_Res101_wt_transform',all_data_transfroms[0],True,'RESNET101'],
                      ['model_RES50_norm_own_30',all_data_transfroms[2],True,'RESNET50'],
-                     ['model_Res50_FCN',all_data_transfroms[2],True,'RESNETFCN']]
+                     ['model_RES50_norm_own_d1',all_data_transfroms[2],True,'RESNET50']]
 
 # Check all files are .pt
 
